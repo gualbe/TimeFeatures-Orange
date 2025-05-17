@@ -17,130 +17,123 @@ from PyQt5.QtWidgets import QPushButton, QVBoxLayout, QHBoxLayout
 from orangecontrib.network import Network
 from orangewidget.utils.signals import Input
 
-'''
-
-CALCULO DE PONDERACIONES PARA LOS PESOS DE LAS ARISTAS.
 
 def calculate_weight(expression):
-    # Encontrar todas las coincidencias con las funciones temporales y almacenarlas
-    matches_shift = list(re.finditer(r'shift\(([^,]+),([-+]?\d+)\)', expression))
-    matches_sum = list(re.finditer(r'sum\(([^,]+),([-+]?\d+),([-+]?\d+)\)', expression))
-    matches_mean = list(re.finditer(r'mean\(([^,]+),([-+]?\d+),([-+]?\d+)\)', expression))
-    matches_count = list(re.finditer(r'count\(([^,]+),([-+]?\d+),([-+]?\d+)\)', expression))
-    matches_min = list(re.finditer(r'min\(([^,]+),([-+]?\d+),([-+]?\d+)\)', expression))
-    matches_max = list(re.finditer(r'max\(([^,]+),([-+]?\d+),([-+]?\d+)\)', expression))
-    matches_sd = list(re.finditer(r'sd\(([^,]+),([-+]?\d+),([-+]?\d+)\)', expression))
-
+    import re
     valores = {}
 
-    # Iterar sobre todas las coincidencias de shift y cambiar la expresión
-    for match in matches_shift:
-        variable_name = match.group(1)
-        shift_value = match.group(2)
+    # Funciones temporales
+    patterns = {
+        "shift": r'shift\(([^,]+),([-+]?\d+)\)',
+        "sum": r'sum\(([^,]+),([-+]?\d+),([-+]?\d+)\)',
+        "mean": r'mean\(([^,]+),([-+]?\d+),([-+]?\d+)\)',
+        "count": r'count\(([^,]+),([-+]?\d+),([-+]?\d+)\)',
+        "min": r'min\(([^,]+),([-+]?\d+),([-+]?\d+)\)',
+        "max": r'max\(([^,]+),([-+]?\d+),([-+]?\d+)\)',
+        "sd": r'sd\(([^,]+),([-+]?\d+),([-+]?\d+)\)'
+    }
 
-        valores[variable_name] = -abs(int(shift_value))
+    for key, pattern in patterns.items():
+        matches = list(re.finditer(pattern, expression))
+        for match in matches:
+            variable_name = match.group(1)
+            if key == "shift":
+                val = int(match.group(2))
+            else:
+                val1 = int(match.group(2))
+                val2 = int(match.group(3))
+                val = val1 if abs(val1) >= abs(val2) else val2
+            valores[variable_name] = val
 
-    for match in matches_sum:
-        variable_name = match.group(1)
-        sum_value1 = match.group(2)
-        sum_value2 = match.group(3)
+    return valores
 
-        valores[variable_name] = -max(abs(int(sum_value1)), abs(int(sum_value2)))
 
-    for match in matches_mean:
-        variable_name = match.group(1)
-        mean_value1 = match.group(2)
-        mean_value2 = match.group(3)
-
-        valores[variable_name] = -max(abs(int(mean_value1)), abs(int(mean_value2)))
-
-    for match in matches_count:
-        variable_name = match.group(1)
-        count_value1 = match.group(2)
-        count_value2 = match.group(3)
-
-        valores[variable_name] = -max(abs(int(count_value1)), abs(int(count_value2)))
-
-    for match in matches_min:
-        variable_name = match.group(1)
-        min_value1 = match.group(2)
-        min_value2 = match.group(3)
-
-        valores[variable_name] = -max(abs(int(min_value1)), abs(int(min_value2)))
-
-    for match in matches_max:
-        variable_name = match.group(1)
-        max_value1 = match.group(2)
-        max_value2 = match.group(3)
-
-        valores[variable_name] = -max(abs(int(max_value1)), abs(int(max_value2)))
-
-    for match in matches_sd:
-        variable_name = match.group(1)
-        sd_value1 = match.group(2)
-        sd_value2 = match.group(3)
-
-        valores[variable_name] = -max(abs(int(sd_value1)), abs(int(sd_value2)))
-
-    return valores.values()'''
 
 def from_row_col(f):
+    from functools import wraps
+
     @wraps(f)
     def wrapped(*args, data):
+        import math, re, numpy as np
+        from scipy import sparse as sp
+        from orangecontrib.network import Network
+        from Orange.data import Table, Domain, StringVariable, DiscreteVariable
+
+        # ------------------------------------------------
+        # 1. PREPARAR LISTAS DE VARIABLES Y RELACIONES
+        # ------------------------------------------------
         data = f(*args, data)
 
-        variables = []
-        tipo_var = []
+        variables     = [str(row[0]).replace(" ", "_").replace("-", "_") for row in data]
+        tipo_var      = []                 # 0 = derivada, 1 = original
+        relaciones    = {}                 # var → [vars relacionadas]
+        variable_expr = {}                 # var → expresión
 
-        for variable in data:
-            var_arreglada = str(variable[0])
-            var_arreglada = var_arreglada.replace(" ", "_").replace("-", "_")
-            variables.append(var_arreglada)
+        patron_vars = r'\b(' + '|'.join(map(re.escape, variables)) + r')\b'
 
-        expresion_regular = r'\b(' + '|'.join(map(re.escape, variables)) + r')\b'
-
-        relaciones = {}
-        # edge_weights = []
-
-        for datos in data:
-            variable = str(datos[0])
-            variable = variable.replace(" ", "_").replace("-", "_")
-            if not math.isnan(datos[1]) and str(datos[1]) != "NaN":
+        for fila in data:
+            var = str(fila[0]).replace(" ", "_").replace("-", "_")
+            expr = str(fila[1])
+            if not math.isnan(fila[1]) and expr != "NaN":
                 tipo_var.append(0)
-                # edge_weights_exp = calculate_weight(str(datos[1]))
-                # for weight in edge_weights_exp:
-                    # edge_weights.append(int(weight))
+                variable_expr[var] = expr
             else:
                 tipo_var.append(1)
-            relaciones[variable] = []
-            for match in re.finditer(expresion_regular, str(datos[1])):
-                for group in match.groups():
-                    if group and group not in relaciones[variable]:
-                        relaciones[variable].append(group)
 
-        row_edges, col_edges = [], []
-        for i, variable in enumerate(relaciones):
-            for related_var in relaciones[variable]:
-                if related_var in relaciones:
-                    # Agrega la variable actual como nodo origen
-                    row_edges.append(i)
-                    # Agrega la variable relacionada (related_var) como nodo de destino
-                    j = list(relaciones.keys()).index(related_var)
-                    col_edges.append(j)
+            relaciones[var] = []
+            for m in re.finditer(patron_vars, expr):
+                if m.group(1) and m.group(1) not in relaciones[var]:
+                    relaciones[var].append(m.group(1))
 
-        nombres_variables = list(relaciones.keys())
-        nombres_variables = np.array(nombres_variables).reshape(-1, 1)
+        # ------------------------------------------------
+        # 2. CONSTRUIR LISTAS DE ORIGEN, DESTINO Y PESO
+        # ------------------------------------------------
+        rows, cols, weights = [], [], []
 
-        tipo_var_reshaped = np.array(tipo_var).reshape(-1, 1)
+        for i, origen in enumerate(relaciones):
+            pesos_origen = calculate_weight(variable_expr.get(origen, ""))
+            for destino in relaciones[origen]:
+                if destino in relaciones:           # ignorar referencias ajenas
+                    j = list(relaciones).index(destino)
+                    rows.append(i)
+                    cols.append(j)
+                    peso = pesos_origen.get(destino, 1)   # 1 si no se detecta
+                    weights.append(float(peso))           # ‼️ mantener signo
 
-        # np_edge_weights = np.array(edge_weights)
+        # ------------------------------------------------
+        # 3. CREAR EL OBJETO Network
+        # ------------------------------------------------
+        n              = len(relaciones)
+        w_arr          = np.asarray(weights, dtype=np.float64)  # tipo correcto
+        edges_sparse   = sp.csr_matrix((w_arr, (rows, cols)), shape=(n, n))
+        net            = Network(range(n), edges_sparse, name=f"{f.__name__}{args}")
 
-        n = len(relaciones)
-        # edges = sp.csr_matrix((np_edge_weights, (row_edges, col_edges)), shape=(n, n))
-        edges = sp.csr_matrix((np.ones(len(row_edges)), (row_edges, col_edges)), shape=(n, n))
-        return Network(range(n), edges, name=f"{f.__name__}{args}"), nombres_variables, tipo_var_reshaped
+        # a) Asignar los pesos a la matriz (layout los usa)
+        net.edges[0].edges.data = w_arr
+
+        # b) Asignar etiquetas de arista visibles
+        net.edge_labels = np.array([str(int(w)) if w.is_integer() else str(w)
+                                    for w in w_arr], dtype=object)
+
+        # ------------------------------------------------
+        # 4. Crear metadatos para los nodos (nombre / tipo)
+        # ------------------------------------------------
+        nombres_np   = np.array(list(relaciones)).reshape(-1, 1)
+        tipo_np      = np.array(tipo_var).reshape(-1, 1)   # 0 derivada, 1 original
+        meta_domain  = Domain([], [], [
+                              StringVariable("var_name"),
+                              DiscreteVariable("var_type", values=["Derived", "Original"])
+                             ])
+        net.nodes = Table(meta_domain,
+                          np.zeros((n, 0)), np.zeros((n, 0)),
+                          np.arange(2*n).reshape(n, 2))
+        net.nodes[:, "var_name"] = nombres_np
+        net.nodes[:, "var_type"] = tipo_np
+
+        return net, nombres_np, tipo_np
 
     return wrapped
+
 
 
 @from_row_col
