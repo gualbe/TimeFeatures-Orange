@@ -98,7 +98,7 @@ def from_row_col(f):
                     rows.append(i)
                     cols.append(j)
                     peso = pesos_origen.get(destino, 1)   # 1 si no se detecta
-                    weights.append(float(peso))           # ‼️ mantener signo
+                    weights.append(float(peso))           # mantener signo
 
         # ------------------------------------------------
         # 3. CREAR EL OBJETO Network
