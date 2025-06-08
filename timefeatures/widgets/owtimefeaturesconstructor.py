@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from traceback import format_exception_only
 from collections import namedtuple, OrderedDict
 from itertools import chain, count
-from typing import List, Dict, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
 
@@ -1649,179 +1649,199 @@ __GLOBALS.update({
 
 class FeatureFunc:
     """
-    Parameters
-    ----------
-    expression : str
-        An expression string
-    args : List[Tuple[str, Orange.data.Variable]]
-        A list of (`name`, `variable`) tuples where `name` is the name of
-        a variable as used in `expression`, and `variable` is the variable
-        instance used to extract the corresponding column/value from a
-        Table/Instance.
-    extra_env : Optional[Dict[str, Any]]
-        Extra environment specifying constant values to be made available
-        in expression. It must not shadow names in `args`
-    cast: Optional[Callable]
-        A function for casting the expressions result to the appropriate
-        type (e.g. string representation of date/time variables to floats)
+    Encapsula la evaluación de una expresión sobre una tabla o instancia.
+
+    Modificación: se añade un almacén de estado de clase
+    (`_GLOBAL_STATE`) para conservar el _buffer_ y el contador de filas
+    procesadas entre los bloques de 5000 filas que Orange maneja
+    internamente. De este modo, las funciones de ventana temporal
+    (`shift`, `sum`, `mean`, …) mantienen el contexto completo.
     """
 
-    dtype: Optional['DType'] = None
+    # ---------- NUEVO: estado persistente por (expresión, variables) ----------
+    _GLOBAL_STATE: Dict[Tuple[str, Tuple[str, ...]], Dict[str, Any]] = {}
+    # -------------------------------------------------------------------------
 
-    def __init__(self, expression, args, extra_env=None, cast=None, use_values=False,
-                 dtype=None):
+    dtype: Optional["DType"] = None  # anotación informativa
+
+    def __init__(
+        self,
+        expression: str,
+        args: List[Tuple[str, Variable]],
+        extra_env: Optional[Dict[str, Any]] = None,
+        cast: Optional[callable] = None,
+        use_values: bool = False,
+        dtype: Optional["DType"] = None,
+    ):
         self.expression = expression
         self.args = args
-        self.extra_env = extra_env
+        self.extra_env = extra_env or {}
         self.cast = cast
         self.mask_exceptions = True
         self.use_values = use_values
         self.dtype = dtype
 
+        # ---------- NUEVO: clave única de estado para esta expresión ----------
+        self._state_key: Tuple[str, Tuple[str, ...]] = (
+            self.expression,
+            tuple(sorted(sanitized_name(v.name) for _, v in self.args)),
+        )
+        if self._state_key not in FeatureFunc._GLOBAL_STATE:
+            FeatureFunc._GLOBAL_STATE[self._state_key] = {
+                "buffer": {sanitized_name(v.name): [] for _, v in self.args},
+                "processed": 0,
+            }
+        # ---------------------------------------------------------------------
+
+    # -------------------------------------------------------------------------
+    # API pública
+    # -------------------------------------------------------------------------
     def __call__(self, table, *_):
         if isinstance(table, Table):
-            return self.__call_table(table)
-        else:
-            return self.__call_instance(table)
+            return self._call_table(table)
+        else:  # se asume instancia individual
+            return self._call_instance(table)
 
-    def __call_table(self, table):
-        try:
-            # Crear un diccionario para almacenar las variables
-            variables = {}
-            list_res = []
+    # -------------------------------------------------------------------------
+    # Implementación para tablas completas (vectorizado)
+    # -------------------------------------------------------------------------
+    def _call_table(self, table: Table):
+        # ---------- Recuperar estado persistente -----------------------------
+        state = FeatureFunc._GLOBAL_STATE[self._state_key]
+        self._buffer: Dict[str, List[Any]] = state["buffer"]
+        self._processed: int = state["processed"]
+        # ---------------------------------------------------------------------
 
-            # Lista de variables por función
-            shift_info_list = []
-            sum_info_list = []
-            mean_info_list = []
-            count_info_list = []
-            min_info_list = []
-            max_info_list = []
-            sd_info_list = []
+        # 1. Acumular las nuevas filas en el buffer
+        for _, var in self.args:
+            column = self.extract_column(table, var)
+            self._buffer[sanitized_name(var.name)].extend(column)
 
-            cont = 0
-            expresion_regular = r'shift\(([^,]+),[-\d]+\)|sum\(([^,]+),[-\d]+,[-\d]+\)|mean\(([^,]+),[-\d]+,' \
-                                r'[-\d]+\)|count\(([^,]+),[-\d]+,[-\d]+\)|min\(([^,]+),[-\d]+,[-\d]+\)|max\(([^,]+),' \
-                                r'[-\d]+,[-\d]+\)|sd\(([^,]+),[-\d]+,[-\d]+\)'
+        end = len(next(iter(self._buffer.values())))
+        results: List[Any] = []
 
-            # Obtenemos las columnas de las variables
-            for _, var in self.args:
-                column = self.extract_column(table, var)
-                var_name = var.name.replace(" ", "_").replace("-", "_")
-                variables[var_name] = column
+        # 2. Evaluar la expresión fila a fila desde _processed hasta end
+        expresion_regular = (
+            r'shift\(([^,]+),[-\d]+\)|sum\(([^,]+),[-\d]+,[-\d]+\)|'
+            r'mean\(([^,]+),[-\d]+,[-\d]+\)|count\(([^,]+),[-\d]+,[-\d]+\)|'
+            r'min\(([^,]+),[-\d]+,[-\d]+\)|max\(([^,]+),[-\d]+,[-\d]+\)|'
+            r'sd\(([^,]+),[-\d]+,[-\d]+\)'
+        )
+        has_time_func = bool(re.search(expresion_regular, self.expression))
+        if has_time_func:
+            from functools import partial
 
-            column_name_match_tempfunc = re.search(expresion_regular, self.expression)
+            # Construir listas con info de cada función temporal
+            shift_info, sum_info, mean_info = [], [], []
+            count_info, min_info, max_info, sd_info = [], [], [], []
 
-            # ----------SI HAY FUNCION TEMPORAL----------
-            if column_name_match_tempfunc:
-                # Iterar sobre las funciones y acumular información
-                for column_name_match_tempfunc in re.finditer(expresion_regular, self.expression):
-                    if column_name_match_tempfunc.group(1):
-                        tabla = column_name_match_tempfunc.group(1)
-                        shift_info_list.append({'tabla': variables[tabla]})
-                    elif column_name_match_tempfunc.group(2):
-                        tabla = column_name_match_tempfunc.group(2)
-                        sum_info_list.append({'tabla': variables[tabla]})
-                    elif column_name_match_tempfunc.group(3):
-                        tabla = column_name_match_tempfunc.group(3)
-                        mean_info_list.append({'tabla': variables[tabla]})
-                    elif column_name_match_tempfunc.group(4):
-                        tabla = column_name_match_tempfunc.group(4)
-                        count_info_list.append({'tabla': variables[tabla]})
-                    elif column_name_match_tempfunc.group(5):
-                        tabla = column_name_match_tempfunc.group(5)
-                        min_info_list.append({'tabla': variables[tabla]})
-                    elif column_name_match_tempfunc.group(6):
-                        tabla = column_name_match_tempfunc.group(6)
-                        max_info_list.append({'tabla': variables[tabla]})
-                    elif column_name_match_tempfunc.group(7):
-                        tabla = column_name_match_tempfunc.group(7)
-                        sd_info_list.append({'tabla': variables[tabla]})
+            for m in re.finditer(expresion_regular, self.expression):
+                # Cada grupo alterna según la función detectada
+                groups = m.groups()
+                if groups[0]:
+                    shift_info.append({"tabla": self._buffer[groups[0]]})
+                elif groups[1]:
+                    sum_info.append({"tabla": self._buffer[groups[1]]})
+                elif groups[2]:
+                    mean_info.append({"tabla": self._buffer[groups[2]]})
+                elif groups[3]:
+                    count_info.append({"tabla": self._buffer[groups[3]]})
+                elif groups[4]:
+                    min_info.append({"tabla": self._buffer[groups[4]]})
+                elif groups[5]:
+                    max_info.append({"tabla": self._buffer[groups[5]]})
+                elif groups[6]:
+                    sd_info.append({"tabla": self._buffer[groups[6]]})
 
-                modified_expression = modificar_expression(self.expression)
+            # Generar expresión modificada (tu función existente)
+            modified_expression = modificar_expression(self.expression)
 
-            # Iterar sobre los valores de las columnas
-            for values in zip(*variables.values()):
-                # Asignar valores a las variables dinámicamente en un diccionario
-                var_dict = {var: value for var, value in zip(variables.keys(), values)}
+        for idx in range(self._processed, end):
+            # Variables de esta fila
+            var_dict = {name: col[idx] for name, col in self._buffer.items()}
 
-                # ------------------------FUNCIONES TEMPORALES-----------------------------
+            # ---------- Evaluar expresión -------------------------------------
+            if has_time_func:
+                # Crear diccionario de funciones parciales por fila
+                funciones_permitidas = {}
 
-                if column_name_match_tempfunc:
-
-                    # Actualizar el diccionario de funciones permitidas para todos los shift
-                    shift_functions = {
-                        f'shift{i}': functools.partial(shift_function, tabla=info['tabla'], cont=cont)
-                        for i, info in enumerate(shift_info_list)
+                # Helpers parciales para cada tipo de función
+                funciones_permitidas.update(
+                    {
+                        f"shift{i}": partial(shift_function, tabla=info["tabla"], cont=idx)
+                        for i, info in enumerate(shift_info)
                     }
-                    # Actualizar el diccionario de funciones permitidas para todos los sum
-                    sum_functions = {
-                        f'sum{i}': functools.partial(sum_function, tabla=info['tabla'], cont=cont)
-                        for i, info in enumerate(sum_info_list)
+                )
+                funciones_permitidas.update(
+                    {
+                        f"sum{i}": partial(sum_function, tabla=info["tabla"], cont=idx)
+                        for i, info in enumerate(sum_info)
                     }
-                    # Actualizar el diccionario de funciones permitidas para todos los mean
-                    mean_functions = {
-                        f'mean{i}': functools.partial(mean_function, tabla=info['tabla'], cont=cont)
-                        for i, info in enumerate(mean_info_list)
+                )
+                funciones_permitidas.update(
+                    {
+                        f"mean{i}": partial(mean_function, tabla=info["tabla"], cont=idx)
+                        for i, info in enumerate(mean_info)
                     }
-                    # Actualizar el diccionario de funciones permitidas para todos los count
-                    count_functions = {
-                        f'count{i}': functools.partial(count_function, tabla=info['tabla'], cont=cont)
-                        for i, info in enumerate(count_info_list)
+                )
+                funciones_permitidas.update(
+                    {
+                        f"count{i}": partial(count_function, tabla=info["tabla"], cont=idx)
+                        for i, info in enumerate(count_info)
                     }
-                    # Actualizar el diccionario de funciones permitidas para todos los min
-                    min_functions = {
-                        f'min{i}': functools.partial(min_function, tabla=info['tabla'], cont=cont)
-                        for i, info in enumerate(min_info_list)
+                )
+                funciones_permitidas.update(
+                    {
+                        f"min{i}": partial(min_function, tabla=info["tabla"], cont=idx)
+                        for i, info in enumerate(min_info)
                     }
-                    # Actualizar el diccionario de funciones permitidas para todos los max
-                    max_functions = {
-                        f'max{i}': functools.partial(max_function, tabla=info['tabla'], cont=cont)
-                        for i, info in enumerate(max_info_list)
+                )
+                funciones_permitidas.update(
+                    {
+                        f"max{i}": partial(max_function, tabla=info["tabla"], cont=idx)
+                        for i, info in enumerate(max_info)
                     }
-                    # Actualizar el diccionario de funciones permitidas para todos los sd
-                    sd_functions = {
-                        f'sd{i}': functools.partial(sd_function, tabla=info['tabla'], cont=cont)
-                        for i, info in enumerate(sd_info_list)
+                )
+                funciones_permitidas.update(
+                    {
+                        f"sd{i}": partial(sd_function, tabla=info["tabla"], cont=idx)
+                        for i, info in enumerate(sd_info)
                     }
+                )
 
-                    # Combinar todos los diccionarios en uno solo
-                    funciones_permitidas = {**shift_functions, **sum_functions, **mean_functions, **count_functions,
-                                            **min_functions, **max_functions, **sd_functions}
-
-                    # Incrementar contador de todas las funciones temporales
-                    cont += 1
-
-                    # Utilizar la expresión modificada para evaluar la expresión
-                    try:
-                        result = eval(modified_expression, var_dict, funciones_permitidas)
-                    # Las operaciones con NaN serán NaN
-                    except:
-                        result = None
-
-                else:
-                    # --------------------NO FUNCION TEMPORAL-----------------------
-                    result = eval(self.expression, var_dict)
-
-                list_res.append(result)
-
-        except ValueError:
-            if self.mask_exceptions:
-                return np.full(len(table), np.nan)
+                try:
+                    res = eval(modified_expression, var_dict, funciones_permitidas)
+                except Exception:
+                    res = None  # En errores se devuelve NaN/None
             else:
-                raise
+                try:
+                    res = eval(self.expression, var_dict)
+                except Exception:
+                    res = None
+            # -----------------------------------------------------------------
 
-        return list_res
+            results.append(res)
 
-    def __call_instance(self, instance: Instance):
+        # 3. Actualizar posición procesada y guardar estado
+        self._processed = end
+        state["processed"] = end
+        return results
+
+    # -------------------------------------------------------------------------
+    # Implementación para una única instancia
+    # -------------------------------------------------------------------------
+    def _call_instance(self, instance):
         table = Table.from_numpy(
             instance.domain,
             np.array([instance.x]),
             np.array([instance.y]),
             np.array([instance.metas]),
         )
-        return self.__call_table(table)[0]
+        return self._call_table(table)[0]
 
+    # -------------------------------------------------------------------------
+    # Utilidades auxiliares sin cambios relevantes
+    # -------------------------------------------------------------------------
     def extract_column(self, table: Table, var: Variable):
         data = table.get_column(var)
         if var.is_string:
@@ -1831,7 +1851,7 @@ class FeatureFunc:
             idx = data.astype(int)
             idx[~np.isfinite(data)] = len(values) - 1
             return values[idx].tolist()
-        elif var.is_time:  # time always needs Values due to str(val) formatting
+        elif var.is_time:
             return Value._as_values(var, data.tolist())  # pylint: disable=protected-access
         elif not self.use_values:
             return data.tolist()
