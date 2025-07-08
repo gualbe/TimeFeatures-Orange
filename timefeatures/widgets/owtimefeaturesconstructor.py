@@ -217,6 +217,27 @@ def shift_function(var, z, tabla=None, cont=None):  # ----FUNCIÓN SHIFT()----
 
     return nuevo_valor
 
+def expand_shiftbatch(expression, base_name):
+
+    expanded_descriptors = []
+    pattern = r'shiftBatch\(([^,]+),\s*(\d+)\)'
+    matches = re.finditer(pattern, expression)
+
+    for match in matches:
+        var_name = match.group(1).strip()
+        n = int(match.group(2))
+        for i in range(1, n + 1):
+            expr = f'shift({var_name},-{i})'
+            new_name = f'{base_name}_{var_name}_t-{i}'
+            descriptor = ContinuousDescriptor(
+                name=new_name,
+                expression=expr,
+                number_of_decimals=3,
+                meta=False
+            )
+            expanded_descriptors.append(descriptor)
+
+    return expanded_descriptors
 
 def sum_function(var, z, x, tabla=None, cont=None):  # ----FUNCIÓN SUM()----
 
@@ -406,7 +427,7 @@ Categorical features are passed as strings
 
     FUNCTIONS = {"abs": "", "float": "", "int": "", "pow": ""}
 
-    TIME_FUNCTIONS = {"shift": "", "sum": "", "mean": "", "count": "", "min": "", "max": "", "sd": ""}
+    TIME_FUNCTIONS = {"shift": "", "sum": "", "mean": "", "count": "", "min": "", "max": "", "sd": "", "shiftBatch": ""}
 
     featureChanged = Signal()
     featureEdited = Signal()
@@ -542,7 +563,7 @@ Categorical features are passed as strings
         index = self.timefunctioncb.currentIndex()
         if index > 0:
             func = self.time_func_model[index]
-            if func in ["shift"]:
+            if func in ["shift", "shiftBatch"]:
                 self.insert_into_expression(func + "(,)")
                 self.expressionedit.cursorBackward(False, 2)
             else:
@@ -1081,11 +1102,6 @@ class owtimefeaturesconstructor(OWWidget, ConcurrentWidgetMixin):
 
         self.expressions_with_values = False
 
-        # Añado el descriptors a la nueva lista de variables.
-        if len(self.descriptors) > 0:
-            for desc in self.descriptors:
-                self.addFeatureTime(desc)
-
         self.createConfigTable()
 
         self.descriptors = []
@@ -1105,7 +1121,6 @@ class owtimefeaturesconstructor(OWWidget, ConcurrentWidgetMixin):
     @Inputs.expressions
     @check_sql_input
     def setExpressions(self, expressions=None):
-
         self.expressions = expressions
 
         if self.expressions is None:
@@ -1113,23 +1128,30 @@ class owtimefeaturesconstructor(OWWidget, ConcurrentWidgetMixin):
             self.Error.transform_error.clear()
 
         if self.data is not None and self.expressions is not None:
-            if self.expressions is not None:
-                if len(self.expressions.domain) >= 1 and (
-                        self.expressions.domain[0].name != "Variable" or self.expressions.domain[1].name != "Expression"):
-                    self.Warning.table_warning()
-                else:
-                    self.Error.transform_error.clear()
-                    for datos in reversed(self.expressions):
-                        if not math.isnan(datos[1]) and str(datos[1]) != "NaN":
-                            desc = ContinuousDescriptor(
-                                name=str(datos[0]),
-                                expression=str(datos[1]),
-                                meta=False,
-                                number_of_decimals=3,
-                            )
-                            self.addFeature(desc)
+            if len(self.expressions.domain) >= 1 and (
+                self.expressions.domain[0].name != "Variable"
+                or self.expressions.domain[1].name != "Expression"
+            ):
+                self.Warning.table_warning()
+            else:
+                self.Error.transform_error.clear()
+                for datos in reversed(self.expressions):
+                    if not math.isnan(datos[1]) and str(datos[1]) != "NaN":
+                        desc = ContinuousDescriptor(
+                            name=str(datos[0]),
+                            expression=str(datos[1]),
+                            meta=False,
+                            number_of_decimals=3,
+                        )
+                        if "shiftBatch" in desc.expression:
+                            for sub_desc in expand_shiftbatch(desc.expression, desc.name):
+                                self.addFeature(sub_desc)
+                            continue  # ⛔️ no añadas el descriptor shiftBatch original
+                        self.addFeature(desc)
+
         else:
             self.Error.transform_error("There is not data input.")
+
 
     def handleNewSignals(self):
         if self.data is not None:
@@ -1212,8 +1234,19 @@ class owtimefeaturesconstructor(OWWidget, ConcurrentWidgetMixin):
         if self.data is None:
             return
 
-        desc = list(self.featuremodel)
-        desc = self._validate_descriptors(desc)
+        desc = list(self.featuremodel)          # ← AQUÍ EXISTE YA
+
+        # ---------- BLOQUE NUEVO (expande shiftBatch) ----------
+        expanded = []
+        for d in desc:
+            if "shiftBatch" in d.expression:
+                expanded.extend(expand_shiftbatch(d.expression, d.name))
+            else:
+                expanded.append(d)
+        desc = expanded
+        # ---------- FIN BLOQUE NUEVO ----------------------------
+
+        desc = self._validate_descriptors(desc) # ← Llamada que ya tenías
         self.start(run, self.data, desc, self.expressions_with_values)
 
         '''
@@ -1225,15 +1258,27 @@ class owtimefeaturesconstructor(OWWidget, ConcurrentWidgetMixin):
 
 
     def on_done(self, result: "Result") -> None:
-        data, attrs, desc = result.data, result.attributes, result.desc
+        data, attrs, _ = result.data, result.attributes, result.desc
+
+        # 1. Comprobación de valores categóricos
         disc_attrs_not_ok = self.check_attrs_values(
-            [var for var in attrs if var.is_discrete], data)
+            [v for v in attrs if v.is_discrete], data)
         if disc_attrs_not_ok:
             self.Error.more_values_needed(disc_attrs_not_ok)
             return
 
+        # 2. Actualiza internamente los datos (ya vienen con las nuevas columnas)
         self.setData(data)
+
+        # 3. Muestra las nuevas variables en la lista “Variables generated”
+        for v in attrs:                       # attrs = columnas recién creadas
+            self.addFeatureTime(
+                ContinuousDescriptor(v.name, v.compute_value.expression, 3, False)
+            )
+
+        # 4. Envía la tabla transformada al siguiente widget
         self.Outputs.data.send(data)
+
 
     def createConfigTable(self):
 
