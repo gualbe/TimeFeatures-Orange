@@ -49,6 +49,7 @@ from Orange.widgets import report
 from Orange.widgets.utils.widgetpreview import WidgetPreview
 from Orange.widgets.widget import OWWidget, Msg, Input, Output
 from Orange.widgets.utils.concurrent import ConcurrentWidgetMixin, TaskState
+from Orange.widgets.settings import Setting
 
 FeatureDescriptor = \
     namedtuple("FeatureDescriptor", ["name", "expression", "meta"],
@@ -849,9 +850,9 @@ class owtimefeaturesconstructor(OWWidget, ConcurrentWidgetMixin):
     want_main_area = False
 
     settingsHandler = FeatureConstructorHandler()
-    descriptors = ContextSetting([])
-    currentIndex = ContextSetting(-1)
-    expressions_with_values = ContextSetting(False)
+    descriptors = Setting([], schema_only=True)
+    currentIndex = Setting(-1)
+    expressions_with_values = Setting(False)
     settings_version = 3
 
     EDITORS = [
@@ -861,6 +862,9 @@ class owtimefeaturesconstructor(OWWidget, ConcurrentWidgetMixin):
         (StringDescriptor, StringFeatureEditor)
     ]
 
+    _x_re  = re.compile(r"^X(\d+)(?:_|$)")   # para extraer n
+    _max_x_used = 0                    # mayor n visto en todo momento
+
     class Error(OWWidget.Error):
         more_values_needed = Msg("Categorical feature {} needs more values.")
         invalid_expressions = Msg("Invalid expressions: {}.")
@@ -869,75 +873,100 @@ class owtimefeaturesconstructor(OWWidget, ConcurrentWidgetMixin):
     class Warning(OWWidget.Warning):
         table_warning = Msg("You need a configuration table (Variable-Expression).")
 
+
+    def _update_max_x_seen(self, *iterables):
+        """
+        Escanea los names de los descriptores/variables recibidos y actualiza
+        `self._max_x_used` si encuentra un X<n> con n mayor.
+        """
+        for it in iterables:
+            for obj in it:
+                m = self._x_re.match(obj.name if hasattr(obj, "name") else str(obj))
+                if m:
+                    n = int(m.group(1))
+                    if n > self._max_x_used:
+                        self._max_x_used = n
+
+
+
     def __init__(self):
         super().__init__()
         ConcurrentWidgetMixin.__init__(self)
+        self._max_x_used = 0      
+        # ------------------------------------------------------------------
+        # Atributos de instancia
+        # ------------------------------------------------------------------
         self.data = None
         self.expressions = None
         self.dataOriginal = None
         self.editors = {}
 
+        # ------------------------------------------------------------------
+        # Marco principal (Variable Definitions)
+        # ------------------------------------------------------------------
         box = gui.vBox(self.controlArea, "Variable Definitions")
 
-        toplayout = QHBoxLayout()
-        toplayout.setContentsMargins(0, 0, 0, 0)
+        toplayout = QHBoxLayout();  toplayout.setContentsMargins(0, 0, 0, 0)
         box.layout().addLayout(toplayout)
 
+        # ---------- pila de editores -------------------------------------
         self.editorstack = QStackedWidget(
             sizePolicy=QSizePolicy(QSizePolicy.MinimumExpanding,
-                                   QSizePolicy.MinimumExpanding)
+                                QSizePolicy.MinimumExpanding)
         )
-
         for descclass, editorclass in self.EDITORS:
             editor = editorclass()
             editor.featureChanged.connect(self._on_modified)
             self.editors[descclass] = editor
             self.editorstack.addWidget(editor)
-
         self.editorstack.setEnabled(False)
 
-        buttonlayout = QVBoxLayout(spacing=10)
-        buttonlayout.setContentsMargins(0, 0, 0, 0)
+        # ------------------------------------------------------------------
+        # Columna de botones (New / Remove / Reset)
+        # ------------------------------------------------------------------
+        buttonlayout = QVBoxLayout(spacing=10); buttonlayout.setContentsMargins(0, 0, 0, 0)
 
+        # ---------- 1) Botón “New” con nombre Xn consecutivo --------------
         self.addbutton = QPushButton(
             "New", toolTip="Create a new variable",
-            minimumWidth=120,
-            shortcut=QKeySequence.New
+            minimumWidth=120, shortcut=QKeySequence.New
         )
 
-        def unique_name(fmt, reserved):
-            candidates = (fmt.format(i) for i in count(1))
-            return next(c for c in candidates if c not in reserved)
-
-        def generate_newname(fmt):
-            return unique_name(fmt, self.reserved_names())
+        def next_Xn() -> str:
+            self._max_x_used += 1
+            return f"X{self._max_x_used}"
 
         menu = QMenu(self.addbutton)
-        cont = menu.addAction("Numeric")
-        cont.triggered.connect(
+
+        act_numeric = menu.addAction("Numeric")
+        act_numeric.triggered.connect(
             lambda: self.addFeature(
-                ContinuousDescriptor(generate_newname("X{}"), "", 3, meta=False))
+                ContinuousDescriptor(next_Xn(), "", 3, meta=False)
+            )
         )
 
         menu.addSeparator()
         self.duplicateaction = menu.addAction("Duplicate Selected Variable")
         self.duplicateaction.triggered.connect(self.duplicateFeature)
         self.duplicateaction.setEnabled(False)
-        self.addbutton.setMenu(menu)
 
+        self.addbutton.setMenu(menu)
+        # ------------------------------------------------------------------
+
+        # ---------- 2) Botón “Remove” -------------------------------------
         self.removebutton = QPushButton(
             "Remove", toolTip="Remove selected variable",
-            minimumWidth=120,
-            shortcut=QKeySequence.Delete
+            minimumWidth=120, shortcut=QKeySequence.Delete
         )
         self.removebutton.clicked.connect(self.removeSelectedFeature)
 
-        self.resetbutton = QPushButton(         # Boton para resetear el nodo
-            "Reset", toolTip="Reset node",
-            minimumWidth=120
+        # ---------- 3) Botón “Reset” --------------------------------------
+        self.resetbutton = QPushButton(
+            "Reset", toolTip="Reset node", minimumWidth=120
         )
         self.resetbutton.clicked.connect(self.reset_domain)
 
+        # ---------- empaquetado de botones --------------------------------
         buttonlayout.addWidget(self.addbutton)
         buttonlayout.addWidget(self.removebutton)
         buttonlayout.addWidget(self.resetbutton)
@@ -946,60 +975,54 @@ class owtimefeaturesconstructor(OWWidget, ConcurrentWidgetMixin):
         toplayout.addLayout(buttonlayout, 0)
         toplayout.addWidget(self.editorstack, 10)
 
-        # Layout for the list view (LA MIA)
-
-        layoutA = QGridLayout()
+        layoutA = QGridLayout()  
         layoutA.setSpacing(2)
-
-        gui.widgetBox(self.controlArea, orientation=layoutA, box='Variables generated')
+        gui.widgetBox(self.controlArea, orientation=layoutA,
+                    box='Variables generated')
 
         self.featureModelTime = DescriptorModel(parent=self)
-
         self.featureviewTime = QListView(
             minimumWidth=200, minimumHeight=50,
             sizePolicy=QSizePolicy(QSizePolicy.Minimum,
-                                   QSizePolicy.MinimumExpanding)
+                                QSizePolicy.MinimumExpanding)
         )
-
         self.featureviewTime.setItemDelegate(FeatureItemDelegate(self))
         self.featureviewTime.setModel(self.featureModelTime)
         self.featureviewTime.selectionModel().selectionChanged.connect(
             self._on_selectedVariableChanged
         )
-
         layoutA.addWidget(self.featureviewTime)
 
-        # Layout for the list view
-
-        layoutB = QGridLayout()
+        layoutB = QGridLayout()  
         layoutB.setSpacing(2)
-
-        gui.widgetBox(self.controlArea, orientation=layoutB, box='Variables to generate')
+        gui.widgetBox(self.controlArea, orientation=layoutB,
+                    box='Variables to generate')
 
         self.featuremodel = DescriptorModel(parent=self)
-
         self.featureview = QListView(
             minimumWidth=200, minimumHeight=50,
             sizePolicy=QSizePolicy(QSizePolicy.Minimum,
-                                   QSizePolicy.MinimumExpanding)
+                                QSizePolicy.MinimumExpanding)
         )
-
         self.featureview.setItemDelegate(FeatureItemDelegate(self))
         self.featureview.setModel(self.featuremodel)
         self.featureview.selectionModel().selectionChanged.connect(
             self._on_selectedVariableChanged
         )
-
         layoutB.addWidget(self.featureview)
 
         box.layout().addLayout(layoutA, 1)
         box.layout().addLayout(layoutB, 1)
 
+
         self.fix_button = gui.button(
             self.buttonsArea, self, "Upgrade Expressions",
-            callback=self.fix_expressions)
+            callback=self.fix_expressions
+        )
         self.fix_button.setHidden(True)
-        gui.button(self.buttonsArea, self, "Send", callback=self.apply, default=True)
+
+        gui.button(self.buttonsArea, self,
+                "Send", callback=self.apply, default=True)
 
     def setCurrentIndex(self, index):
         index = min(index, len(self.featuremodel) - 1)
@@ -1014,7 +1037,7 @@ class owtimefeaturesconstructor(OWWidget, ConcurrentWidgetMixin):
         self.duplicateaction.setEnabled(index >= 0)
         self.removebutton.setEnabled(index >= 0)
 
-    def reset_domain(self):
+    def reset_domain(self, *, with_apply=False):
 
         self.expressions_with_values = False
 
@@ -1034,15 +1057,16 @@ class owtimefeaturesconstructor(OWWidget, ConcurrentWidgetMixin):
         selmodel.selectionChanged.disconnect(self._on_selectedVariableChanged)
 
         # Listas de variables a cero.
-        self.featuremodel[:] = list(self.descriptors)
-        self.featureModelTime[:] = list(self.descriptors)
+        self.featuremodel[:] = [d for d in self.descriptors if not d.meta]  
+        self.featureModelTime[:] = [d for d in self.descriptors if d.meta] 
         self.setCurrentIndex(self.currentIndex)
 
         selmodel.selectionChanged.connect(self._on_selectedVariableChanged)
         self.fix_button.setHidden(not self.expressions_with_values)
         self.editorstack.setEnabled(self.currentIndex >= 0)
 
-        self.apply()
+        if with_apply:
+            self.apply()
 
     def _on_selectedVariableChanged(self, selected, *_):
         index = selected_row(self.featureview)
@@ -1089,34 +1113,42 @@ class owtimefeaturesconstructor(OWWidget, ConcurrentWidgetMixin):
                      if idx != idx_]
         return set(varnames)
 
+    # ---------------------------------------------------------------------
+    #  TimeFeatures - versión que conserva las descripciones al recargar
+    # ---------------------------------------------------------------------
     @Inputs.data
     @check_sql_input
     def setData(self, data=None):
-        """Set the input dataset."""
-
         self.data = data
+        if data is None:
+            return
 
-        if self.dataOriginal is None or self.data.name != self.dataOriginal.name:
+        # -------------------------------
+        # Si cambia el dominio, reinicia
+        if (self.dataOriginal is not None
+                and data.domain != self.dataOriginal.domain):
             self.dataOriginal = data.copy()
-            self.reset_domain()
+            self.reset_domain()               # ← aquí SÍ se vacían descriptors
+        elif self.dataOriginal is None:       # primera vez
+            self.dataOriginal = data.copy()
+        # -------------------------------
 
-        self.expressions_with_values = False
+        # Actualiza vistas con lo que haya en descriptors
+        self.featuremodel[:] = [d for d in self.descriptors if not d.meta] 
+        self.featureModelTime[:] = [d for d in self.descriptors if d.meta] 
+        self.setCurrentIndex(-1)
 
-        self.createConfigTable()
+        # Si hay descriptores (caso .ows restaurado) aplica transformaciones
+        if self.descriptors:
+            self.apply()
 
-        self.descriptors = []
-        self.currentIndex = -1
+        self._update_max_x_seen(self.featuremodel, self.featureModelTime)
 
-        # disconnect from the selection model while reseting the model
-        selmodel = self.featureview.selectionModel()
-        selmodel.selectionChanged.disconnect(self._on_selectedVariableChanged)
 
-        self.featuremodel[:] = list(self.descriptors)
-        self.setCurrentIndex(self.currentIndex)
 
-        selmodel.selectionChanged.connect(self._on_selectedVariableChanged)
-        self.fix_button.setHidden(not self.expressions_with_values)
-        self.editorstack.setEnabled(self.currentIndex >= 0)
+
+
+
 
     @Inputs.expressions
     @check_sql_input
@@ -1171,6 +1203,7 @@ class owtimefeaturesconstructor(OWWidget, ConcurrentWidgetMixin):
         editor = self.editorstack.currentWidget()
         editor.nameedit.setFocus()
         editor.nameedit.selectAll()
+        self._update_max_x_seen([descriptor])
 
     def addFeatureTime(self, descriptor):
         self.featureModelTime.append(descriptor)
@@ -1228,120 +1261,166 @@ class owtimefeaturesconstructor(OWWidget, ConcurrentWidgetMixin):
 
         return final
 
+    # ----------------------------------------------------------------------
+    # 1) owtimefeaturesconstructor.apply  (versión mejorada)
+    # ----------------------------------------------------------------------
     def apply(self):
+        """
+        Construye las nuevas variables.
+
+        • Expande los shiftBatch(...) en desplazamientos simples.
+        • Nunca añade el placeholder shiftBatch(...) a self.descriptors
+        (evita que aparezca como 'X1', 'X2', …).
+        • No toca self.featureModelTime; así las columnas generadas
+        previamente permanecen visibles.
+        """
         self.cancel()
         self.Error.clear()
         if self.data is None:
             return
 
-        desc = list(self.featuremodel)          # ← AQUÍ EXISTE YA
+        # --- 1. Descriptores introducidos manualmente --------------------
+        candidate = list(self.featuremodel)
 
-        # ---------- BLOQUE NUEVO (expande shiftBatch) ----------
+        # --- 2. Expansión de shiftBatch(...) -----------------------------
         expanded = []
-        for d in desc:
-            if "shiftBatch" in d.expression:
+        for d in candidate:
+            if "shiftBatch(" in d.expression:
                 expanded.extend(expand_shiftbatch(d.expression, d.name))
             else:
                 expanded.append(d)
-        desc = expanded
-        # ---------- FIN BLOQUE NUEVO ----------------------------
+        expanded = self._validate_descriptors(expanded)
 
-        desc = self._validate_descriptors(desc) # ← Llamada que ya tenías
-        self.start(run, self.data, desc, self.expressions_with_values)
+        self._update_max_x_seen(self.featuremodel, self.featureModelTime, self.descriptors)
 
-        '''
-        INTENTO DE PODER USAR VARIABLES NO CONTENIDAS EN EL DATASET ORIGINAL.
-        
-        desc = list(self.featuremodel)
-        for d in desc:
-            self.start(run, self.data, self._validate_descriptors(d), self.expressions_with_values)'''
+        # --- 3. Purga previa de placeholders en self.descriptors ---------
+        self.descriptors = [
+            d for d in self.descriptors
+            if "shiftBatch(" not in d.expression
+        ]
+
+        self.featureModelTime[:] = [
+            d for d in self.featureModelTime
+            if "shiftBatch(" not in d.expression
+        ]
+
+        # --- 4. Añadir solo los descriptores realmente nuevos -----------
+        names_already = {d.name for d in self.descriptors}
+        for d in expanded:
+            if d.name not in names_already:
+                self.descriptors.append(d)
+                names_already.add(d.name)
+
+        # --- 5. Refrescar SOLO la lista “Variables to generate” ----------
+        self.featuremodel[:] = [d for d in self.descriptors if not d.meta] 
+        self.setCurrentIndex(-1)
+
+        # --- 6. Limpiar estado de funciones de ventana -------------------
+        FeatureFunc._GLOBAL_STATE.clear()
+
+        # --- 7. Lanzar la tarea de transformación -----------------------
+        self.start(
+            run,
+            self.data,
+            self.descriptors,
+            self.expressions_with_values
+        )
 
 
     def on_done(self, result: "Result") -> None:
-        data, attrs, _ = result.data, result.attributes, result.desc
+        # 0) Desempaquetar
+        data, new_attrs, _ = result.data, result.attributes, result.desc
 
-        # 1. Comprobación de valores categóricos
-        disc_attrs_not_ok = self.check_attrs_values(
-            [v for v in attrs if v.is_discrete], data)
-        if disc_attrs_not_ok:
-            self.Error.more_values_needed(disc_attrs_not_ok)
+        # 1) Comprobación de categorías fuera de rango
+        disc = self.check_attrs_values([v for v in new_attrs if v.is_discrete], data)
+        if disc:
+            self.Error.more_values_needed(disc)
             return
 
-        # 2. Actualiza internamente los datos (ya vienen con las nuevas columnas)
-        self.setData(data)
+        # 2) Guardar la tabla transformada y la copia original
+        self.data = data
+        if self.dataOriginal is None:
+            self.dataOriginal = data.copy()
 
-        # 3. Muestra las nuevas variables en la lista “Variables generated”
-        for v in attrs:                       # attrs = columnas recién creadas
-            self.addFeatureTime(
-                ContinuousDescriptor(v.name, v.compute_value.expression, 3, False)
-            )
+        # 3) Añadir las nuevas columnas a “Variables generated”
+        generated_names = {d.name for d in self.featureModelTime}
+        for v in new_attrs:
+            if v.name not in generated_names:
+                self.featureModelTime.append(
+                    ContinuousDescriptor(v.name, v.compute_value.expression, 3, True)
+                )
+                generated_names.add(v.name)
 
-        # 4. Envía la tabla transformada al siguiente widget
+        # 4) Asegurarse de que **también** quedan guardadas en self.descriptors
+        desc_names = {d.name for d in self.descriptors}
+        for v in new_attrs:
+            if v.name not in desc_names:
+                self.descriptors.append(
+                    ContinuousDescriptor(v.name, v.compute_value.expression, 3, True)
+                )
+                desc_names.add(v.name)
+
+        # 5) Limpiar “Variables to generate”: quita las que ya se han creado
+        created = {v.name for v in new_attrs}
+        self.featuremodel[:] = [
+            d for d in self.featuremodel
+            if d.name not in created and "shiftBatch" not in d.expression
+        ]
+
+        # 6) Sincronizar el contador X<n> automático por si acaso
+        self._update_max_x_seen(new_attrs)
+
+        # 7) Reconstruir la tabla Variable-Expression y enviar salidas
+        self.createConfigTable()
         self.Outputs.data.send(data)
 
 
+
+
+
+    # ----------------------------------------------------------------------
+    # 2) owtimefeaturesconstructor.createConfigTable
+    # ----------------------------------------------------------------------
     def createConfigTable(self):
+        """
+        Construye la tabla Variable-Expression enviada por la salida
+        “expressions”.
 
-        expresiones = []
-        variables = []
-        cont = 0
-        contMetasOriginales = 0    # Variable para contar las metas del dataset.
+        –  'Variable' es un DiscreteVariable (los nombres son únicos).
+        –  'Expression' se guarda como StringVariable **meta** para permitir
+        duplicados y cumplir con “variables must be primitive”.
+        """
+        variables, expresiones = [], []
 
-        for feature in self.featureModelTime:       # Cuento las variables meta que existen.
-            if feature.meta:
-                cont += 1
+        # Recoge sólo los descriptores definitivos (no metas)
+        for desc in self.descriptors:
+                variables.append(desc.name)
+                expresiones.append(desc.expression)
 
-        for expre in self.featureModelTime:     # Guardo las expresiones de los variables que no son meta.
-            if not expre.meta:
-                expresiones.append(str(expre.expression))
+        # Columna 'Variable' (única)
+        var_column  = Orange.data.DiscreteVariable(
+            name="Variable",
+            values=variables
+        )
 
-        for i in range(0, len(self.data.domain)):       # Bucle para obtener las variables de la tabla de configuración.
+        # Columna 'Expression' como texto ⇒ puede repetirse
+        expr_column = Orange.data.StringVariable(name="Expression")
 
-            if contMetasOriginales == 0:        # Si el dataset tiene metas, las tendrá en cuenta.
-                contMetasOriginales += len(self.data.domain.metas)
-                cont = contMetasOriginales
+        # Dominio: 'Variable' como atributo y 'Expression' como meta
+        domain = Orange.data.Domain(
+            [var_column],          # attributes
+            metas=[expr_column]    # metas
+        )
 
-            if cont > 0:        # No se tendrá en cuenta las metas a la hora de añadir las variables.
-                i -= cont
-            if self.data.domain.class_var is not None:      # Si tiene class_var lo ignorará.
-                if str(self.data.domain.class_var) != str(self.data.domain[i].name):
-                    variables.append(str(self.data.domain[i].name))
-            else:
-                variables.append(str(self.data.domain[i].name))
+        # Filas = atributo + meta
+        rows = [[v, e] for v, e in zip(variables, expresiones)]
 
-        # En este bucle tratamos las variables meta por separado con sus expresiones.
-        for metas in self.featureModelTime:
-            if metas.meta:
-                variables.append(str(metas.name))
-                expresiones.append(str(metas.expression))
-                variables.pop(0)
+        config_table = Orange.data.Table.from_list(domain, rows)
 
-        variable_column = Orange.data.DiscreteVariable(name="Variable", values=variables)
-        expresion_column = Orange.data.DiscreteVariable(name="Expression", values=expresiones)
+        # Envía la tabla resultante
+        self.Outputs.expressions.send(config_table)
 
-        # Creo el dominio
-        domain = Orange.data.Domain([variable_column, expresion_column])
 
-        new_instances = []
-        relacion_variables_expresiones = {}
-
-        # Le doy la vuelta a las expresiones para que cuadren con las variables
-        expresiones_r = list(reversed(expresiones))
-
-        # Asignar a cada variable su expresión correspondiente
-        for i, variable in enumerate(reversed(variables)):
-            if i < len(expresiones):
-                relacion_variables_expresiones[variable] = expresiones_r[i]
-            else:
-                relacion_variables_expresiones[variable] = None
-
-        for variable, expresion in relacion_variables_expresiones.items():
-            new_instance = Orange.data.Instance(domain, [variable, expresion])
-            new_instances.append(new_instance)
-
-        tabla_config = Orange.data.Table(domain, new_instances)
-
-        self.Outputs.expressions.send(tabla_config)
 
     def on_exception(self, ex: Exception):
         log = logging.getLogger(__name__)
@@ -1702,10 +1781,8 @@ class FeatureFunc:
     internamente. De este modo, las funciones de ventana temporal
     (`shift`, `sum`, `mean`, …) mantienen el contexto completo.
     """
-
-    # ---------- NUEVO: estado persistente por (expresión, variables) ----------
     _GLOBAL_STATE: Dict[Tuple[str, Tuple[str, ...]], Dict[str, Any]] = {}
-    # -------------------------------------------------------------------------
+
 
     dtype: Optional["DType"] = None  # anotación informativa
 
