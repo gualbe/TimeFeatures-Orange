@@ -1,0 +1,5 @@
+[orange.canvas.help]
+html-index = timefeatures.widgets:WIDGET_HELP_PATH
+
+[orange.widgets]
+Time-Features = timefeatures.widgets

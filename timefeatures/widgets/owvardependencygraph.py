@@ -1,139 +1,95 @@
-import math
 import re
 from functools import wraps
-
-import Orange
-from Orange.widgets.widget import OWWidget
-from Orange.widgets.utils.concurrent import ConcurrentWidgetMixin
 
 import numpy as np
 from scipy import sparse as sp
 
+import Orange
 from Orange.data import Table, Domain, StringVariable, DiscreteVariable
 from Orange.widgets import gui, widget, settings
-from Orange.widgets.widget import Output, Msg
+from Orange.widgets.widget import OWWidget, Output, Msg
+from Orange.widgets.utils.concurrent import ConcurrentWidgetMixin
+from orangewidget.utils.signals import Input
+from orangecontrib.network import Network
+
 from PyQt5.QtWidgets import QPushButton, QVBoxLayout, QHBoxLayout
 
-from orangecontrib.network import Network
-from orangewidget.utils.signals import Input
+
+# ────────────────────────────  funcionaes de utilidad  ────────────────────────────
+def normalize(name: str) -> str:
+    return name.replace(" ", "_").replace("-", "_")
 
 
-def calculate_weight(expression):
-    import re
-    valores = {}
-
-    # Funciones temporales
-    patterns = {
-        "shift": r'shift\(([^,]+),([-+]?\d+)\)',
-        "sum": r'sum\(([^,]+),([-+]?\d+),([-+]?\d+)\)',
-        "mean": r'mean\(([^,]+),([-+]?\d+),([-+]?\d+)\)',
-        "count": r'count\(([^,]+),([-+]?\d+),([-+]?\d+)\)',
-        "min": r'min\(([^,]+),([-+]?\d+),([-+]?\d+)\)',
-        "max": r'max\(([^,]+),([-+]?\d+),([-+]?\d+)\)',
-        "sd": r'sd\(([^,]+),([-+]?\d+),([-+]?\d+)\)'
-    }
-
-    for key, pattern in patterns.items():
-        matches = list(re.finditer(pattern, expression))
-        for match in matches:
-            variable_name = match.group(1)
-            if key == "shift":
-                val = int(match.group(2))
-            else:
-                val1 = int(match.group(2))
-                val2 = int(match.group(3))
-                val = val1 if abs(val1) >= abs(val2) else val2
-            valores[variable_name] = val
-
-    return valores
+def calculate_weight(expr: str):
+    """
+    Devuelve {var_normalizada: lag}.  Solo se usa el desplazamiento de
+    `shift(...)`; si no se encuentra se devuelve 1.
+    """
+    out = {}
+    for var, lag in re.findall(r"shift\(([^,]+),\s*([-+]?\d+)\)", expr):
+        out[normalize(var)] = int(lag)
+    return out
 
 
-
+# ───────────────  decorador: tabla Variable-Expression → Network  ───────────────
 def from_row_col(f):
-    from functools import wraps
-
     @wraps(f)
     def wrapped(*args, data):
-        import math, re, numpy as np
-        from scipy import sparse as sp
-        from orangecontrib.network import Network
-        from Orange.data import Table, Domain, StringVariable, DiscreteVariable
+        data = f(*args, data)                            # tabla Variable-Expression
 
-        # ------------------------------------------------
-        # 1. PREPARAR LISTAS DE VARIABLES Y RELACIONES
-        # ------------------------------------------------
-        data = f(*args, data)
+        # Descartar los placeholders generados por shiftBatch(...)
+        rows_ok = [r for r in data if "shiftBatch(" not in str(r["Expression"])]
 
-        variables     = [str(row[0]).replace(" ", "_").replace("-", "_") for row in data]
-        tipo_var      = []                 # 0 = derivada, 1 = original
-        relaciones    = {}                 # var → [vars relacionadas]
-        variable_expr = {}                 # var → expresión
+        variables     = [normalize(str(r[0])) for r in rows_ok]
+        relations     = {v: [] for v in variables}
+        variable_expr = {}
+        tipo_var      = []
 
-        patron_vars = r'\b(' + '|'.join(map(re.escape, variables)) + r')\b'
+        pat_vars = r"\b(" + "|".join(map(re.escape, variables)) + r")\b"
 
-        for fila in data:
-            var = str(fila[0]).replace(" ", "_").replace("-", "_")
-            expr = str(fila[1])
-            if not math.isnan(fila[1]) and expr != "NaN":
-                tipo_var.append(0)
+        for fila in rows_ok:
+            var, expr = normalize(str(fila[0])), str(fila["Expression"])
+
+            if expr and expr.lower() != "nan":
+                tipo_var.append(0)                # derivada
                 variable_expr[var] = expr
             else:
-                tipo_var.append(1)
+                tipo_var.append(1)                # original
 
-            relaciones[var] = []
-            for m in re.finditer(patron_vars, expr):
-                if m.group(1) and m.group(1) not in relaciones[var]:
-                    relaciones[var].append(m.group(1))
+            for m in re.finditer(pat_vars, expr):
+                dst = m.group(1)
+                if dst and dst not in relations[var]:
+                    relations[var].append(dst)
 
-        # ------------------------------------------------
-        # 2. CONSTRUIR LISTAS DE ORIGEN, DESTINO Y PESO
-        # ------------------------------------------------
-        rows, cols, weights = [], [], []
-
-        for i, origen in enumerate(relaciones):
-            pesos_origen = calculate_weight(variable_expr.get(origen, ""))
-            for destino in relaciones[origen]:
-                if destino in relaciones:           # ignorar referencias ajenas
-                    j = list(relaciones).index(destino)
+        # matriz dispersa con pesos = lag
+        rows, cols, w = [], [], []
+        for i, src in enumerate(relations):
+            pesos_src = calculate_weight(variable_expr.get(src, ""))
+            for dst in relations[src]:
+                if dst in relations:
                     rows.append(i)
-                    cols.append(j)
-                    peso = pesos_origen.get(destino, 1)   # 1 si no se detecta
-                    weights.append(float(peso))           # mantener signo
+                    cols.append(list(relations).index(dst))
+                    w.append(float(pesos_src.get(dst, 1)))
+        
+        n      = len(relations)
+        w_arr  = np.asarray(w, dtype=np.float64)
+        mat    = sp.csr_matrix((w_arr, (rows, cols)), shape=(n, n))
 
-        # ------------------------------------------------
-        # 3. CREAR EL OBJETO Network
-        # ------------------------------------------------
-        n              = len(relaciones)
-        w_arr          = np.asarray(weights, dtype=np.float64)  # tipo correcto
-        edges_sparse   = sp.csr_matrix((w_arr, (rows, cols)), shape=(n, n))
-        net            = Network(range(n), edges_sparse, name=f"{f.__name__}{args}")
+        # Network *sin* pasar nombre posicional extra
+        net = Network(range(n), mat)
+        net.name = f"{f.__name__}{args}"
 
-        # a) Asignar los pesos a la matriz (layout los usa)
-        net.edges[0].edges.data = w_arr
+        # etiquetas visibles = lag
+        net.edge_labels = np.array([str(int(x)) if x.is_integer() else str(x)
+                                    for x in w_arr],
+                                   dtype=object)
 
-        # b) Asignar etiquetas de arista visibles
-        net.edge_labels = np.array([str(int(w)) if w.is_integer() else str(w)
-                                    for w in w_arr], dtype=object)
-
-        # ------------------------------------------------
-        # 4. Crear metadatos para los nodos (nombre / tipo)
-        # ------------------------------------------------
-        nombres_np   = np.array(list(relaciones)).reshape(-1, 1)
-        tipo_np      = np.array(tipo_var).reshape(-1, 1)   # 0 derivada, 1 original
-        meta_domain  = Domain([], [], [
-                              StringVariable("var_name"),
-                              DiscreteVariable("var_type", values=["Derived", "Original"])
-                             ])
-        net.nodes = Table(meta_domain,
-                          np.zeros((n, 0)), np.zeros((n, 0)),
-                          np.arange(2*n).reshape(n, 2))
-        net.nodes[:, "var_name"] = nombres_np
-        net.nodes[:, "var_type"] = tipo_np
-
-        return net, nombres_np, tipo_np
+        # nodos ⇒ metas (var_name, var_type)
+        nombres = np.array(list(relations)).reshape(-1, 1)
+        tipos   = np.array(tipo_var).reshape(-1, 1)
+        return net, nombres, tipos
 
     return wrapped
-
 
 
 @from_row_col
@@ -141,23 +97,15 @@ def grafo(data=None):
     return data
 
 
+# ────────────────────────────  widget  ────────────────────────────
 class owvardependencygraph(OWWidget, ConcurrentWidgetMixin):
-    name = "Variable Dependency Graph"
-    description = "Construct a graph with all the conexions between the variables"
-    icon = "icons/graphgenerator.svg"
-    keywords = "variable dependency graph, function, graph, dependency, variable"
-    priority = 2240
+    name        = "Variable Dependency Graph"
+    icon        = "icons/graphgenerator.svg"
+    GRAPH_TYPES = (grafo,)
+    graph_type  = settings.Setting(0)
 
-    GRAPH_TYPES = (
-        grafo,)
-
-    graph_type = settings.Setting(0)
-
-    want_main_area = False
-
+    want_main_area   = False
     resizing_enabled = False
-
-    settings_version = 3
 
     class Error(widget.OWWidget.Error):
         generation_error = Msg("{}")
@@ -168,66 +116,53 @@ class owvardependencygraph(OWWidget, ConcurrentWidgetMixin):
     class Outputs:
         network = Output("Network", Network)
 
-    def __init__(self, *args, **kwargs):
-
-        super().__init__(*args, **kwargs)
+    def __init__(self):
+        super().__init__()
         ConcurrentWidgetMixin.__init__(self)
-        self.controlArea.setMinimumWidth(360)
-
         self.data = None
 
         box = gui.vBox(self.controlArea, "Graph generator")
-
-        toplayout = QHBoxLayout()
-        toplayout.setContentsMargins(0, 0, 0, 0)
-        box.layout().addLayout(toplayout)
-
-        buttonlayout = QVBoxLayout(spacing=10)
-        buttonlayout.setContentsMargins(0, 0, 0, 0)
-
-        self.btn_generate = QPushButton(
-            "Generate", toolTip="Generate dependency graph.",
-            minimumWidth=10
-        )
+        hl  = QHBoxLayout(); box.layout().addLayout(hl)
+        self.btn_generate = QPushButton("Generate")
         self.btn_generate.clicked.connect(self.generate)
-        self.btn_generate.setEnabled(False)
-        buttonlayout.addWidget(self.btn_generate)
-        toplayout.addLayout(buttonlayout, 0)
+        hl.addWidget(self.btn_generate)
 
+    # ───────── entrada ─────────
     @Inputs.data
-    def setData(self, data=None):
-
+    def setData(self, data):
         self.data = data
-
-        if self.data is not None:
-            if len(self.data.domain) >= 1 and (self.data.domain[0].name != "Variable" or self.data.domain[1].name != "Expression"):
-                self.Error.generation_error("You need a configuration table (Variable-Expression).")
-                self.Outputs.network.send(None)
-            else:
-                self.generate()
-                self.btn_generate.setEnabled(True)
-        else:
-            self.Error.clear()
+        if data is None:
             self.Outputs.network.send(None)
-            self.btn_generate.setEnabled(False)
+            return
 
-    def generate(self):
-
-        func = self.GRAPH_TYPES[self.graph_type]
-
-        self.Error.generation_error.clear()
-        try:
-            network, nombres_variables, tipo_var_reshaped = func(data=self.data)
-        except ValueError as exc:
-            self.Error.generation_error(exc)
-            network = None
+        attrs = [v.name for v in data.domain.attributes]
+        metas = [v.name for v in data.domain.metas]
+        ok    = "Variable" in attrs and "Expression" in metas
+        self.btn_generate.setEnabled(ok)
+        if ok:
+            self.generate()
         else:
-            n = len(network.nodes)
-            network.nodes = Table(Domain([], [], [StringVariable("var_name"), DiscreteVariable("var_type", values=["Derived", "Original"])]),
-                                  np.zeros((n, 0)), np.zeros((n, 0)),
-                                  np.arange(2*n).reshape((n, 2)))
+            self.Error.generation_error("Need Variable / Expression columns")
+            self.Outputs.network.send(None)
 
-            network.nodes[:, "var_name"] = nombres_variables
-            network.nodes[:, "var_type"] = tipo_var_reshaped
+    # ───────── construir grafo ─────────
+    def generate(self):
+        try:
+            net, nombres, tipos = self.GRAPH_TYPES[self.graph_type](data=self.data)
+        except Exception as e:
+            self.Error.generation_error(str(e))
+            self.Outputs.network.send(None)
+            return
 
-        self.Outputs.network.send(network)
+        n = len(net.nodes)
+        meta_dom = Domain([], [], [
+            StringVariable("var_name"),
+            DiscreteVariable("var_type", values=["Derived", "Original"])
+        ])
+        metas = np.empty((n, 2), dtype=object)
+        net.nodes = Table(meta_dom, np.zeros((n, 0)), np.zeros((n, 0)), metas)
+        net.nodes[:, "var_name"] = nombres
+        net.nodes[:, "var_type"] = tipos
+
+        self.Error.clear()
+        self.Outputs.network.send(net)

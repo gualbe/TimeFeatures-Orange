@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="cp1252" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Save to DB</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/nature.css" />
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="prev" title="Variable Dependency Graph" href="owvardependencygraph.html" /> 
+  </head><body>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="owvardependencygraph.html" title="Variable Dependency Graph"
+             accesskey="P">previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">TimeFeatures 0.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Save to DB</a></li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+          <div class="body" role="main">
+            
+  <section id="save-to-db">
+<h1>Save to DB</h1>
+<p>The <strong>Save to DB</strong> node stores any data table that flows through a
+workflow into a PostgreSQL database and keeps a master catalogue of the
+datasets that have been uploaded.  It is the final step in the example
+workflow, after feature engineering and graph generation, and can be
+re-used in any pipeline that needs persistent storage.</p>
+<section id="what-the-node-expects">
+<h2>What the node expects</h2>
+<ul class="simple">
+<li><p><strong>Input &mdash; Data</strong>
+A regular Orange data table.
+The input is mandatory; without it the node is idle.</p></li>
+</ul>
+</section>
+<section id="what-the-node-does">
+<h2>What the node does</h2>
+<ol class="arabic simple">
+<li><p>Opens a connection to the target PostgreSQL instance.</p></li>
+<li><p>Creates a new table whose name you specify, and writes the entire
+dataset into it (columns become fields, each row becomes a record).</p></li>
+<li><p>Updates an internal <em>datasets</em> catalogue table so that every stored
+data set can be tracked later (name, schema, upload time, user, &hellip;).</p></li>
+<li><p>(Optional) Sends an e-mail notification summarising the operation
+once the upload succeeds.</p></li>
+</ol>
+</section>
+<section id="how-to-configure-it">
+<h2>How to configure it</h2>
+<ol class="arabic">
+<li><p>Drag the node into the canvas and connect the <em>Data</em> output of the
+previous step.  The <strong>Save</strong> button becomes enabled as soon as a
+table is received.</p></li>
+<li><p>Fill in the <strong>database credentials</strong> (performed once per session):</p>
+<ul class="simple">
+<li><p><strong>Server</strong> &rarr; <code class="docutils literal notranslate"><span class="pre">localhost</span></code> (or your remote host)</p></li>
+<li><p><strong>Username</strong> &rarr; the PostgreSQL user, e.g. <code class="docutils literal notranslate"><span class="pre">postgres</span></code></p></li>
+<li><p><strong>Password</strong> &rarr; the password you entered during the installation</p></li>
+</ul>
+<p>Press <strong>Connect</strong>.  The status line turns green when the login
+succeeds.</p>
+</li>
+<li><p>Choose a <strong>Table name</strong> for the new data set.  Pick something unique;
+the node will complain if a table with the same name already exists.</p></li>
+<li><p>(Optional) Type an <strong>e-mail address</strong>.  A short confirmation message
+with basic statistics and the destination table is sent after the
+upload.</p></li>
+<li><p>Press <strong>Save</strong>.  A progress bar appears while the data are streamed
+into the database.  Once finished, you can verify the result in
+<em>pgAdmin</em> or any SQL client &mdash; you should see:</p>
+<ul class="simple">
+<li><p>a new table with the chosen name containing every column of the
+Orange table;</p></li>
+<li><p>an updated <strong>datasets</strong> master table with a new entry that points
+to the freshly created data set.</p></li>
+</ul>
+</li>
+</ol>
+</section>
+<section id="tips-best-practices">
+<h2>Tips &amp; best practices</h2>
+<ul class="simple">
+<li><p><strong>Class field</strong>&emsp;If the data set has a class variable, select its type
+(<em>Categorical</em> or <em>Numeric</em>) in the drop-down so the field is stored
+with the right SQL data type.</p></li>
+<li><p><strong>Versioning policy</strong>&emsp;If you need to keep historical snapshots, use a
+consistent naming convention such as
+<code class="docutils literal notranslate"><span class="pre">sales_2025_q2</span></code> or <code class="docutils literal notranslate"><span class="pre">sensorlog_2025-07-16</span></code>.</p></li>
+<li><p><strong>Large uploads</strong>&emsp;Network hiccups may break the transaction.  When
+working with millions of rows consider increasing the PostgreSQL
+<em>statement_timeout</em> or using a local instance and later dumping the
+table to the production server.</p></li>
+<li><p><strong>Automation</strong>&emsp;Because the node writes a canonical entry to the
+<em>datasets</em> catalogue, you can build dashboards or downstream Orange
+workflows that query that index and load any stored data set on
+demand.</p></li>
+</ul>
+</section>
+<section id="limitations">
+<h2>Limitations</h2>
+<ul class="simple">
+<li><p>The current implementation supports <strong>PostgreSQL only</strong>.  To use
+another DBMS you must adapt the connection code.</p></li>
+<li><p>Table names must obey PostgreSQL rules (start with a letter or
+underscore, contain only alphanumerics and underscores, and be
+case-insensitive unless quoted).</p></li>
+<li><p>Binary columns (images, complex objects) are not yet supported; they
+must be serialised beforehand.</p></li>
+</ul>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="owvardependencygraph.html" title="Variable Dependency Graph"
+             >previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">TimeFeatures 0.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Save to DB</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2025, Francesc Rodriguez, Alejandro Rivas and Gualberto Asencio.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    </div>
+  </body>
+</html>

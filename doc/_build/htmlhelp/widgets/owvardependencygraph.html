@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="cp1252" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Variable Dependency Graph</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/nature.css" />
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="next" title="Save to DB" href="owsavetodb.html" />
+    <link rel="prev" title="Time Features Constructor" href="owtimefeaturesconstructor.html" /> 
+  </head><body>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="owsavetodb.html" title="Save to DB"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="owtimefeaturesconstructor.html" title="Time Features Constructor"
+             accesskey="P">previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">TimeFeatures 0.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Variable Dependency Graph</a></li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+          <div class="body" role="main">
+            
+  <section id="variable-dependency-graph">
+<h1>Variable Dependency Graph</h1>
+<p>The <strong>Variable Dependency Graph</strong> widget converts a <em>Variable / Expression</em>
+table (produced by <em>Time Features Constructor</em>) into an interactive directed
+network that highlights how every generated feature depends on the rest of
+the data set.</p>
+<section id="overview">
+<h2>Overview</h2>
+<ul class="simple">
+<li><p><strong>Input</strong> &ndash; a single Orange <cite>Table</cite> whose
+first attribute column is <strong>Variable</strong> and whose first meta column is
+<strong>Expression</strong> (each row comes straight from <em>Time Features Constructor</em>).</p></li>
+<li><p><strong>Output</strong> &ndash; a <cite>Network</cite> object (orange-network package) whose
+nodes represent variables and whose edges represent dependencies
+discovered in the expressions.</p></li>
+<li><p><strong>Typical use-case</strong> &ndash; plug the table emitted by
+<em>Time Features Constructor</em> into <em>Variable Dependency Graph</em> and then feed
+the resulting network to <em>Network Explorer</em> for visual analysis.</p></li>
+</ul>
+</section>
+<section id="what-the-widget-does">
+<h2>What the widget does</h2>
+<ol class="arabic simple">
+<li><p><strong>Parse every expression</strong>
+Each row is scanned for references to other variables
+(exact matches only &ndash; whitespace and dashes are normalised).</p></li>
+<li><p><strong>Detect temporal shifts</strong>
+If an expression contains <code class="docutils literal notranslate"><span class="pre">shift(var,</span> <span class="pre">&plusmn;k)</span></code> the edge between <em>var</em> and the
+derived feature is annotated with the lag <em>k</em>.  Positive values are shown
+as <em>1, 2, &hellip;</em> (no sign).</p></li>
+<li><p><strong>Build a sparse adjacency matrix</strong>
+Edges carry the numerical lag (default = <code class="docutils literal notranslate"><span class="pre">1</span></code> when no shift is present).</p></li>
+<li><p><strong>Create the `Network` object</strong></p>
+<ul class="simple">
+<li><p><strong>edge_labels</strong> &ndash; string version of the lag (<code class="docutils literal notranslate"><span class="pre">&quot;1&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;3&quot;</span></code>, &hellip;),
+ready for display in <em>Network Explorer</em> (turn on <em>Show edge weights</em>).</p></li>
+<li><p><strong>node meta fields</strong>
+- <code class="docutils literal notranslate"><span class="pre">var_name</span></code>  &rarr; the column name displayed as the node label.
+- <code class="docutils literal notranslate"><span class="pre">var_type</span></code>  &rarr; <em>Derived</em> or <em>Original</em> (can be mapped to colour).</p></li>
+</ul>
+</li>
+</ol>
+</section>
+<section id="user-interface">
+<h2>User interface</h2>
+<ul class="simple">
+<li><p><strong>Generate</strong> button &ndash; forces a refresh (table changes are detected
+automatically, but you can click to be sure).</p></li>
+<li><p>No additional settings: the widget is intentionally minimal &ndash; all styling,
+filtering and layout happen in <em>Network Explorer</em>.</p></li>
+</ul>
+</section>
+<section id="practical-tips">
+<h2>Practical tips</h2>
+<ul class="simple">
+<li><p>When you open the network in <em>Network Explorer</em>:
+- Set <strong>Label &rarr; var_name</strong> to show readable names.
+- Set <strong>Colour &rarr; var_type</strong> to distinguish originals (orange) from derived features (blue).
+- Enable <em>Show edge weights</em> to see the temporal lags on the arrows.</p></li>
+<li><p>The widget ignores expressions that reference variables not present in the
+table &ndash; useful when you experiment with placeholder names.</p></li>
+</ul>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="owsavetodb.html" title="Save to DB"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="owtimefeaturesconstructor.html" title="Time Features Constructor"
+             >previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">TimeFeatures 0.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Variable Dependency Graph</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2025, Francesc Rodriguez, Alejandro Rivas and Gualberto Asencio.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    </div>
+  </body>
+</html>

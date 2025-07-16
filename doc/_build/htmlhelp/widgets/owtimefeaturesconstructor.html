@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="cp1252" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Time Features Constructor</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/nature.css" />
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="next" title="Variable Dependency Graph" href="owvardependencygraph.html" />
+    <link rel="prev" title="TimeFeatures add-on" href="../index.html" /> 
+  </head><body>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="owvardependencygraph.html" title="Variable Dependency Graph"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="../index.html" title="TimeFeatures add-on"
+             accesskey="P">previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">TimeFeatures 0.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Time Features Constructor</a></li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+          <div class="body" role="main">
+            
+  <section id="time-features-constructor">
+<h1>Time Features Constructor</h1>
+<p>The <strong>Time Features Constructor</strong> node builds time&ndash;based features
+(shifts, rolling statistics, etc.) on top of any Orange data table.
+It usually sits between the data-source node and the nodes that will
+consume the enriched data set (for example <em>Variable Dependency Graph</em>,
+<em>Save to DB</em> or any learner).</p>
+<section id="overview">
+<h2>Overview</h2>
+<ul class="simple">
+<li><p>Receives a data table (<strong>Data</strong>) and, optionally, a
+<em>Variable Definitions</em> table.</p></li>
+<li><p>Lets you define new variables <strong>manually</strong> or by <strong>importing</strong> an
+existing Variable/Expression table.</p></li>
+<li><p>Outputs the updated data table and the updated
+<em>Variable Definitions</em> table.</p></li>
+</ul>
+</section>
+<section id="inputs-and-outputs">
+<h2>Inputs and outputs</h2>
+<ul class="simple">
+<li><p><strong>Input &ndash; Data</strong>
+Mandatory. Original data on which features will be computed.</p></li>
+<li><p><strong>Input &ndash; Variable Definitions</strong>
+Optional. A two-column table (Variable, Expression) that lists
+expressions to evaluate.</p></li>
+<li><p><strong>Output &ndash; Data</strong>
+The original data plus every generated feature.</p></li>
+<li><p><strong>Output &ndash; Variable Definitions</strong>
+A full list of variables (original + derived) with their expressions.</p></li>
+</ul>
+</section>
+<section id="variable-definitions-format">
+<h2>Variable Definitions format</h2>
+<ul class="simple">
+<li><p><strong>Variable</strong> &ndash; Name of the variable, original or derived.</p></li>
+<li><p><strong>Expression</strong> &ndash; Formula used to compute the variable.
+Original variables carry the value <code class="docutils literal notranslate"><span class="pre">nan</span></code>.</p></li>
+</ul>
+</section>
+<section id="typical-workflow">
+<h2>Typical workflow</h2>
+<ol class="arabic">
+<li><p><strong>Connect data</strong> &ndash; Attach any data-providing node to <strong>Data</strong>.
+The data set must have a file/stream name so that new columns are
+tagged properly.</p></li>
+<li><p><strong>Create features</strong></p>
+<p><em>Automatic mode</em> &ndash; Send a pre-built Variable/Expression table into
+the <em>Variable Definitions</em> input.
+The node evaluates every expression automatically.</p>
+<p><em>Manual mode</em></p>
+<ul>
+<li><p>Choose <strong>New &rarr; Numeric</strong> to insert an empty row into
+<em>Variables to generate</em>.</p></li>
+<li><p>Type the expression or use the drop-downs:</p>
+<p>&ndash; Variable chooser (original or already generated variables).
+&ndash; Operators <code class="docutils literal notranslate"><span class="pre">+</span>&#160; <span class="pre">-</span>&#160; <span class="pre">*</span>&#160; <span class="pre">/</span>&#160; <span class="pre">%</span></code> and parentheses.
+&ndash; Basic functions <code class="docutils literal notranslate"><span class="pre">abs</span>&#160; <span class="pre">int</span>&#160; <span class="pre">float</span>&#160; <span class="pre">pow</span></code>.
+&ndash; Time functions listed below.</p>
+</li>
+<li><p>Edit, duplicate or delete pending variables as needed.</p></li>
+<li><p>Press <strong>Send</strong> to evaluate every pending expression.</p></li>
+</ul>
+</li>
+<li><p><strong>Outputs</strong> &ndash; Pressing <strong>Send</strong> (or supplying an input table)
+triggers feature computation, table update and the emission of both
+outputs.</p></li>
+</ol>
+</section>
+<section id="time-functions">
+<h2>Time functions</h2>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">shift(var,</span> <span class="pre">lag)</span></code> &ndash; Shift <em>var</em> <strong>lag</strong> steps (negative or positive).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sum(var,</span> <span class="pre">inf,</span> <span class="pre">sup)</span></code> &ndash; Sum of <em>var</em> from <em>t &ndash; inf</em> to <em>t &ndash; sup</em>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">min(var,</span> <span class="pre">inf,</span> <span class="pre">sup)</span></code> &ndash; Minimum in the window.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">max(var,</span> <span class="pre">inf,</span> <span class="pre">sup)</span></code> &ndash; Maximum in the window.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sd(var,</span> <span class="pre">inf,</span> <span class="pre">sup)</span></code> &ndash; Standard deviation in the window.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">mean(var,</span> <span class="pre">inf,</span> <span class="pre">sup)</span></code> &ndash; Arithmetic mean in the window.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">count(var,</span> <span class="pre">inf,</span> <span class="pre">sup)</span></code> &ndash; Number of non-null values in the window.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">shiftBatch(var,</span> <span class="pre">n)</span></code> &ndash; Convenience macro that generates <em>n</em>
+consecutive <strong>backward</strong> lags for <em>var</em>: <code class="docutils literal notranslate"><span class="pre">t-1</span> <span class="pre">&hellip;</span> <span class="pre">t-n</span></code>.
+For example <code class="docutils literal notranslate"><span class="pre">shiftBatch(x,</span> <span class="pre">3)</span></code> automatically creates</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">x_t-1</span></code>  (same as <code class="docutils literal notranslate"><span class="pre">shift(x,</span> <span class="pre">1)</span></code>)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">x_t-2</span></code>  (<code class="docutils literal notranslate"><span class="pre">shift(x,</span> <span class="pre">2)</span></code>)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">x_t-3</span></code>  (<code class="docutils literal notranslate"><span class="pre">shift(x,</span> <span class="pre">3)</span></code>)</p></li>
+</ul>
+<p>Positive <em>n</em> therefore means &ldquo;look <em>n</em> steps into the past&rdquo;.</p>
+</li>
+</ul>
+<p>For all window functions <em>inf</em> and <em>sup</em> may be positive or negative;
+<em>inf</em> must be the smaller (earlier) offset.</p>
+</section>
+<section id="important-notes">
+<h2>Important notes</h2>
+<ul class="simple">
+<li><p><strong>No nested window functions</strong> &ndash; You cannot write
+<code class="docutils literal notranslate"><span class="pre">shift(mean(var,0,1),2)</span></code>.  First create <code class="docutils literal notranslate"><span class="pre">mean(var,0,1)</span></code>,
+then shift the new variable.</p></li>
+<li><p><strong>Duplicate names</strong> &ndash; The node auto-renames duplicates by appending
+<code class="docutils literal notranslate"><span class="pre">_1</span></code>, <code class="docutils literal notranslate"><span class="pre">_2</span></code>&hellip;</p></li>
+<li><p><strong>Invalid expressions</strong> &ndash; Highlighted in red and blocked until fixed.</p></li>
+<li><p><strong>Reset</strong> &ndash; Clears every pending and generated variable.</p></li>
+</ul>
+</section>
+<section id="keyboard-shortcuts">
+<h2>Keyboard shortcuts</h2>
+<ul class="simple">
+<li><p><strong>Enter</strong> &ndash; Confirm expression editing.</p></li>
+<li><p><strong>Delete / Backspace</strong> &ndash; Remove the selected pending variable.</p></li>
+</ul>
+</section>
+<section id="summary">
+<h2>Summary</h2>
+<ul class="simple">
+<li><p>Requires <strong>Data</strong>; <em>Variable Definitions</em> is optional.</p></li>
+<li><p>Generates shifts and rolling statistics (including <code class="docutils literal notranslate"><span class="pre">shiftBatch</span></code>).</p></li>
+<li><p>Outputs an enriched data table and an updated definition table.</p></li>
+<li><p>Manual editor with helper drop-downs and validation.</p></li>
+<li><p>Press <strong>Send</strong> to compute all pending features.</p></li>
+</ul>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="owvardependencygraph.html" title="Variable Dependency Graph"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="../index.html" title="TimeFeatures add-on"
+             >previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">TimeFeatures 0.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Time Features Constructor</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2025, Francesc Rodriguez, Alejandro Rivas and Gualberto Asencio.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    </div>
+  </body>
+</html>

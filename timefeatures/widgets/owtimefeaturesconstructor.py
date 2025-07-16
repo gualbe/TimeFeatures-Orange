@@ -37,7 +37,7 @@ from orangewidget.utils.combobox import ComboBoxSearch
 import Orange
 from Orange.preprocess.transformation import MappingTransform
 from Orange.util import frompyfunc
-from Orange.data import Variable, Table, Value, Instance
+from Orange.data import Variable, Table, Value, Instance, Domain, StringVariable
 from Orange.data.util import get_unique_names
 from Orange.widgets import gui
 from Orange.widgets.settings import ContextSetting, DomainContextHandler
@@ -50,6 +50,7 @@ from Orange.widgets.utils.widgetpreview import WidgetPreview
 from Orange.widgets.widget import OWWidget, Msg, Input, Output
 from Orange.widgets.utils.concurrent import ConcurrentWidgetMixin, TaskState
 from Orange.widgets.settings import Setting
+
 
 FeatureDescriptor = \
     namedtuple("FeatureDescriptor", ["name", "expression", "meta"],
@@ -1266,65 +1267,61 @@ class owtimefeaturesconstructor(OWWidget, ConcurrentWidgetMixin):
     # ----------------------------------------------------------------------
     def apply(self):
         """
-        Construye las nuevas variables.
-
-        • Expande los shiftBatch(...) en desplazamientos simples.
-        • Nunca añade el placeholder shiftBatch(...) a self.descriptors
-        (evita que aparezca como 'X1', 'X2', …).
-        • No toca self.featureModelTime; así las columnas generadas
-        previamente permanecen visibles.
+        Expande shiftBatch, evita duplicados en el dominio y mantiene
+        la lista de descriptores completa para el grafo.
         """
         self.cancel()
         self.Error.clear()
         if self.data is None:
             return
 
-        # --- 1. Descriptores introducidos manualmente --------------------
-        candidate = list(self.featuremodel)
+        # 1) Descriptores pendientes + ya generados (necesarios para el grafo)
+        candidate = list(self.featuremodel) + list(self.featureModelTime)
 
-        # --- 2. Expansión de shiftBatch(...) -----------------------------
+        # 2) Expandir shiftBatch(...)
         expanded = []
         for d in candidate:
-            if "shiftBatch(" in d.expression:
-                expanded.extend(expand_shiftbatch(d.expression, d.name))
-            else:
-                expanded.append(d)
+            expanded.extend(
+                expand_shiftbatch(d.expression, d.name)
+                if "shiftBatch(" in d.expression else [d]
+            )
         expanded = self._validate_descriptors(expanded)
 
-        self._update_max_x_seen(self.featuremodel, self.featureModelTime, self.descriptors)
-
-        # --- 3. Purga previa de placeholders en self.descriptors ---------
-        self.descriptors = [
-            d for d in self.descriptors
-            if "shiftBatch(" not in d.expression
-        ]
-
-        self.featureModelTime[:] = [
-            d for d in self.featureModelTime
-            if "shiftBatch(" not in d.expression
-        ]
-
-        # --- 4. Añadir solo los descriptores realmente nuevos -----------
-        names_already = {d.name for d in self.descriptors}
+        # 3) Evitar nombres ya presentes en el dominio
+        used = {v.name for v in self.data.domain.variables +
+                            self.data.domain.metas}
+        to_generate, keep_for_graph = [], []
         for d in expanded:
-            if d.name not in names_already:
-                self.descriptors.append(d)
-                names_already.add(d.name)
+            if d.name not in used:
+                to_generate.append(d)      # se generará
+                used.add(d.name)
+            keep_for_graph.append(d)       # SIEMPRE va al grafo
 
-        # --- 5. Refrescar SOLO la lista “Variables to generate” ----------
-        self.featuremodel[:] = [d for d in self.descriptors if not d.meta] 
+        # 4) Actualizar la lista maestra de descriptores (sin perder los antiguos)
+        self.descriptors.extend(
+            [d for d in keep_for_graph if d.name not in {x.name for x in self.descriptors}]
+        )
+
+        # 5) Limpiar “Variables to generate” (ya no hace falta mostrar nada)
+        self.featuremodel.clear()
         self.setCurrentIndex(-1)
 
-        # --- 6. Limpiar estado de funciones de ventana -------------------
+        # 6) Reset de estado global y reconstrucción de Variable-Expression
         FeatureFunc._GLOBAL_STATE.clear()
+        self.createConfigTable()          # ahora incluye TODO (viejo+nuevo)
 
-        # --- 7. Lanzar la tarea de transformación -----------------------
+        # 7) Si no hay nada pendiente, no lances la tarea
+        if not to_generate:
+            return
+
         self.start(
             run,
             self.data,
-            self.descriptors,
+            to_generate,                   #  ◀︎ sólo las nuevas columnas
             self.expressions_with_values
         )
+
+
 
 
     def on_done(self, result: "Result") -> None:
@@ -1383,44 +1380,38 @@ class owtimefeaturesconstructor(OWWidget, ConcurrentWidgetMixin):
     # ----------------------------------------------------------------------
     def createConfigTable(self):
         """
-        Construye la tabla Variable-Expression enviada por la salida
-        “expressions”.
-
-        –  'Variable' es un DiscreteVariable (los nombres son únicos).
-        –  'Expression' se guarda como StringVariable **meta** para permitir
-        duplicados y cumplir con “variables must be primitive”.
+        Variable-Expression table sent on the ‘Variable Definitions’ output.
+        – ‘Variable’   ⋙ Discrete attribute   (unique list of names)
+        – ‘Expression’ ⋙ String     meta      (can repeat / be NaN)
         """
-        variables, expresiones = [], []
+        import numpy as np
+        from Orange.data import Domain, Table, StringVariable, DiscreteVariable
 
-        # Recoge sólo los descriptores definitivos (no metas)
-        for desc in self.descriptors:
-                variables.append(desc.name)
-                expresiones.append(desc.expression)
+        # 1. recopilar la mejor expresión para cada variable
+        best = {}
+        for d in reversed(self.descriptors):           # los últimos pisan a los viejos
+            txt = d.expression.strip()
+            if d.name not in best and txt and txt.lower() != "nan":
+                best[d.name] = txt
 
-        # Columna 'Variable' (única)
-        var_column  = Orange.data.DiscreteVariable(
-            name="Variable",
-            values=variables
-        )
+        # 2. añadir las columnas originales sin expresión
+        if self.dataOriginal is not None:
+            for v in self.dataOriginal.domain.attributes:
+                best.setdefault(v.name, np.nan)
 
-        # Columna 'Expression' como texto ⇒ puede repetirse
-        expr_column = Orange.data.StringVariable(name="Expression")
+        # 3. columnas
+        names = list(best)                                            # únicos, orden de aparición
+        var_attr  = DiscreteVariable("Variable", values=names)        # atributo categórico
+        expr_meta = StringVariable("Expression")                      # meta texto
 
-        # Dominio: 'Variable' como atributo y 'Expression' como meta
-        domain = Orange.data.Domain(
-            [var_column],          # attributes
-            metas=[expr_column]    # metas
-        )
+        domain = Domain([var_attr], metas=[expr_meta])
 
-        # Filas = atributo + meta
-        rows = [[v, e] for v, e in zip(variables, expresiones)]
+        # 4. filas:  [Variable,  Expression]
+        rows = [[name, expr] for name, expr in best.items()]
+        config = Table.from_list(domain, rows)
 
-        config_table = Orange.data.Table.from_list(domain, rows)
-
-        # Envía la tabla resultante
-        self.Outputs.expressions.send(config_table)
-
-
+        # 5. enviar al canal
+        self.Outputs.expressions.send(config)
 
     def on_exception(self, ex: Exception):
         log = logging.getLogger(__name__)

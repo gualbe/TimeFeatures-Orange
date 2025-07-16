@@ -1,0 +1,102 @@
+<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML//EN">
+<HTML>
+<HEAD>
+<meta name="GENERATOR" content="Microsoft&reg; HTML Help Workshop 4.1">
+<!-- Sitemap 1.0 -->
+</HEAD><BODY>
+<OBJECT type="text/site properties">
+        <param name="Window Styles" value="0x801227">
+        <param name="ImageType" value="Folder">
+</OBJECT>
+<UL>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="TimeFeatures 0.1 documentation">
+    <param name="Local" value="index.html">
+</OBJECT>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="Time Features Constructor">
+    <param name="Local" value="widgets/owtimefeaturesconstructor.html">
+</OBJECT>
+<UL>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="Overview">
+    <param name="Local" value="widgets/owtimefeaturesconstructor.html#overview">
+</OBJECT>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="Inputs and outputs">
+    <param name="Local" value="widgets/owtimefeaturesconstructor.html#inputs-and-outputs">
+</OBJECT>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="Variable Definitions format">
+    <param name="Local" value="widgets/owtimefeaturesconstructor.html#variable-definitions-format">
+</OBJECT>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="Typical workflow">
+    <param name="Local" value="widgets/owtimefeaturesconstructor.html#typical-workflow">
+</OBJECT>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="Time functions">
+    <param name="Local" value="widgets/owtimefeaturesconstructor.html#time-functions">
+</OBJECT>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="Important notes">
+    <param name="Local" value="widgets/owtimefeaturesconstructor.html#important-notes">
+</OBJECT>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="Keyboard shortcuts">
+    <param name="Local" value="widgets/owtimefeaturesconstructor.html#keyboard-shortcuts">
+</OBJECT>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="Summary">
+    <param name="Local" value="widgets/owtimefeaturesconstructor.html#summary">
+</OBJECT>
+</UL>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="Variable Dependency Graph">
+    <param name="Local" value="widgets/owvardependencygraph.html">
+</OBJECT>
+<UL>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="Overview">
+    <param name="Local" value="widgets/owvardependencygraph.html#overview">
+</OBJECT>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="What the widget does">
+    <param name="Local" value="widgets/owvardependencygraph.html#what-the-widget-does">
+</OBJECT>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="User interface">
+    <param name="Local" value="widgets/owvardependencygraph.html#user-interface">
+</OBJECT>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="Practical tips">
+    <param name="Local" value="widgets/owvardependencygraph.html#practical-tips">
+</OBJECT>
+</UL>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="Save to DB">
+    <param name="Local" value="widgets/owsavetodb.html">
+</OBJECT>
+<UL>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="What the node expects">
+    <param name="Local" value="widgets/owsavetodb.html#what-the-node-expects">
+</OBJECT>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="What the node does">
+    <param name="Local" value="widgets/owsavetodb.html#what-the-node-does">
+</OBJECT>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="How to configure it">
+    <param name="Local" value="widgets/owsavetodb.html#how-to-configure-it">
+</OBJECT>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="Tips &amp; best practices">
+    <param name="Local" value="widgets/owsavetodb.html#tips-best-practices">
+</OBJECT>
+<LI> <OBJECT type="text/sitemap">
+    <param name="Name" value="Limitations">
+    <param name="Local" value="widgets/owsavetodb.html#limitations">
+</OBJECT>
+</UL>
+</UL></BODY></HTML>
